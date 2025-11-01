@@ -1,49 +1,49 @@
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.vectorstores import FAISS
-from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.llms import HuggingFacePipeline
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables import RunnablePassthrough
-
+from langchain.chains import LLMChain
+from langchain.prompts import PromptTemplate
 from transformers import pipeline
+import textwrap
 
-
-
-loader = PyPDFLoader(r"path/to/the/pdf") 
+loader = PyPDFLoader(r"path/to/the/pdf")
 docs = loader.load()
+
 
 splitter = RecursiveCharacterTextSplitter(chunk_size=400, chunk_overlap=50)
 chunks = splitter.split_documents(docs)
 
-
-embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-vectorstore = FAISS.from_documents(chunks, embeddings)
-retriever = vectorstore.as_retriever()
-
-summarizer_pipe = pipeline("text2text-generation", model="google/flan-t5-base", max_new_tokens=300)
+summarizer_pipe = pipeline(
+    "text2text-generation",
+    model="google/flan-t5-small",
+    max_new_tokens=200,
+    truncation=True,
+    temperature=0.3,
+    device=-1   
+)
 llm = HuggingFacePipeline(pipeline=summarizer_pipe)
 
-
-
-
-
-prompt = ChatPromptTemplate.from_template("""
-Summarize the following context in clear and concise bullet points.
-Context:
-{context}
-
-Question:
-{question}
+prompt = PromptTemplate.from_template("""
+Summarize the following text in 3-5 concise bullet points:
+{text}
 """)
 
+chain = LLMChain(llm=llm, prompt=prompt)
 
-rag_chain = (
-    {"context": retriever, "question": RunnablePassthrough()}
-    | prompt
-    | llm
-)
-response = rag_chain.invoke("")
+summaries = []
+for i, chunk in enumerate(chunks): 
+    print(f"\nSummarizing chunk {i+1}/{len(chunks)} ...")
+    summary = chain.run(chunk.page_content)
+    summaries.append(summary.strip())
 
-print("Summary:\n")
-print(response)
+final_summary_input = "\n".join(summaries)
+final_summary_prompt = PromptTemplate.from_template("""
+Combined summary:
+{input}
+""")
+combine_chain = LLMChain(llm=llm, prompt=final_summary_prompt)
+
+final_summary = combine_chain.run({"input": final_summary_input})
+
+print("\nSUMMARY:\n")
+print(textwrap.fill(final_summary, width=100))
